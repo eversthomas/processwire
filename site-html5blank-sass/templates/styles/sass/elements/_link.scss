@@ -1,0 +1,14 @@
+
+// ----------
+// Links
+// ----------
+
+a {
+  color: $link;
+  transition: 1s;
+
+  &:hover {
+    cursor: pointer;
+    color: $hover;
+  }
+}

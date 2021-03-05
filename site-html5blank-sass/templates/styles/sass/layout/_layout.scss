@@ -1,0 +1,35 @@
+// layout
+
+header {
+	background: #eee;
+	padding: 1rem 1rem 2rem 1rem;
+}
+
+.wrapper, .page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.with-sidebar {
+	display: block;
+	@media screen and (min-width: 768px) {
+		display: flex;
+		
+		main {
+			width: 68%;
+		}
+		aside {
+			width: 28%;
+		}
+	}
+}
+
+main, aside {
+	padding: 1rem;
+}
+
+footer {
+	background: #444;
+	color: white;
+	padding: 2rem 1rem 1rem 1rem;
+}

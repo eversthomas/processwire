@@ -1,0 +1,38 @@
+
+// ----------
+// Buttons
+// ----------
+
+.button,
+[type=submit] {
+  background-color: white;
+  border: none;
+  color: black;
+  padding: 0.3rem 1rem;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 1rem;
+  margin: 0.2rem 0rem;
+  transition-duration: 0.4s;
+  border: 2px solid #555555;
+  border-radius: 5px;
+  cursor: pointer;
+  outline:0;
+
+  &:hover,
+  &:focus {
+    background-color: #555555;
+    color: white;
+    outline:0;
+  }
+
+  &:active {
+    opacity: .7;
+  }
+
+  &[disabled] {
+    opacity: 0.8;
+    cursor: not-allowed;
+  }
+}

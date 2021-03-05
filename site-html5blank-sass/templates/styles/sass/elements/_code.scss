@@ -1,0 +1,23 @@
+
+// ----------
+// Code
+// ----------
+
+pre {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+
+  code {
+    display: block;
+    padding: 0.5rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+}
+
+code {
+  padding: 2px;
+  white-space: nowrap;
+  background: #E7E7E7;
+  font-family: "Consolas", "Monaco", "Menlo", monospace;
+}

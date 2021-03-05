@@ -1,0 +1,377 @@
+<?php
+
+namespace ProcessWire;
+
+class ProcessCacheControl extends Process implements Module
+{
+    /** @var string The name of the GET parameter that determines the action to perform. */
+    public const ACTION_PARAMETER_NAME = 'action';
+
+    /** @var string The base name for the required permission for using this module. */
+    public const MODULE_PERMISSION = 'cache-control';
+
+    /** @var string The format for optional action-specific permissions. @see self::getActionPermissionName */
+    public const ACTION_PERMISSION_FORMAT = '%1$s-%2$s';
+
+    /** @var string The ID of the default cache action. */
+    public const DEFAULT_ACTION_ID = 'all';
+
+    public static function getModuleInfo()
+    {
+        return [
+            'title' => __('Cache Control'),
+            'summary' => __('Adds an entry to the setup menu to clear all caches. Provides an API to add cache management actions and an interface to execute them.'),
+            'author' => "Moritz L'Hoest",
+            'href' => 'https://github.com/MoritzLost/ProcessCacheControl',
+            'version' => '1.1.0',
+            'icon' => 'floppy-o',
+            'singular' => true,
+            'useNavJSON' => true,
+            'installs' => 'CacheControlTools',
+            'requires' => [
+                'ProcessWire>=3.0.130',
+                'PHP>=7.1',
+            ],
+            'permission' => self::MODULE_PERMISSION,
+            'permissions' => [
+                self::MODULE_PERMISSION => __('Use the cache control interface provided by the ProcessCacheControl module and execute cache control actions.')
+            ],
+            'page' => [
+                'name' => 'cache-control',
+                'parent' => 'setup',
+                'title' => __('Cache Control'),
+            ],
+        ];
+    }
+
+    /**
+     * Check if the user can instantiate and use this module. Check this as a
+     * static method BEFORE instantiating the module, because it will throw an
+     * error if the user can't access it.
+     *
+     * @param User|null $user   The user whose access to check. Defaults to the current user.
+     * @return boolean
+     */
+    public static function canUseModule(?User $user = null): bool
+    {
+        $user = $user ?? wire('user');
+        return $user->hasPermission(self::MODULE_PERMISSION);
+    }
+
+    /**
+     * Get all actions that a user is allowed to execute.
+     *
+     * @param User|null $user   The user whose access to check. Defaults to the current user.
+     * @return array
+     */
+    public function getAllowedActions(?User $user = null): array
+    {
+        $user = $user ?? wire('user');
+        return array_filter($this->getActionDefinitions(), function (array $action) use ($user) {
+            return $this->canExecuteAction($action['id'], $user);
+        });
+    }
+
+    /**
+     * Get all available cache actions. This method can be hooked to add
+     * additional cache actions. Action definitions are associative arrays. The
+     * following array keys are required:
+     *  - id (string): The ID for this job, used as a GET parameter.
+     *  - title (string): The display title for the job.
+     *  - callback (callable): Any callable or closure to call when this method gets executed.
+     *
+     * @return array An array of action definitions (associative arrays).
+     */
+    public function ___getActionDefinitions(): array
+    {
+        return [
+            [
+                'id' => self::DEFAULT_ACTION_ID,
+                'title' => $this->_('Clear all'),
+                'icon' => 'floppy-o',
+                'callback' => [$this, 'clearAll'],
+            ],
+        ];
+    }
+
+    /**
+     * Perform the action specified by the passed action ID. Actions can be added
+     * through hooks, @see ProcessCacheControl::getActionDefinitions.
+     *
+     * @param string $actionId
+     * @return void
+     */
+    public function ___executeAction(string $actionId): void
+    {
+        // get the action definition, if it exists
+        $actionDefinition = $this->getActionDefinitionById($actionId);
+        if (null === $actionDefinition) {
+            throw new \InvalidArgumentException(
+                sprintf($this->_('Action with ID %s does not exist.'), $actionId)
+            );
+        }
+        // if a specific permission for this action exists, the user needs it in order
+        // to execute this action. otherwise, the user only needs the general
+        // cache-control permission
+        $actionPermissionName = $this->getActionPermissionName($actionId);
+        $actionPermissionExists = $this->permissions->has($actionPermissionName);
+        $actionAllowed = $this->canExecuteAction($actionId, $this->user);
+        if (!$actionAllowed) {
+            $permissionDeniedMessage = $actionPermissionExists
+                ? $this->_('Prevented user %1$s from executing cache control action %2$s because it requires the following permissions: %3$s, %4$s')
+                : $this->_('Prevented user %1$s from executing cache control action %2$s because it requires the following permission: %3$s');
+            $this->modules->get('CacheControlTools')->logMessage(sprintf(
+                $permissionDeniedMessage,
+                $this->user->name,
+                $actionId,
+                self::MODULE_PERMISSION,
+                $actionPermissionName
+            ));
+        } else {
+            call_user_func($actionDefinition['callback'], $this->modules->get('CacheControlTools'));
+        }
+    }
+
+    /**
+     * Clear all caches according to the module configuration. This is the default
+     * action that the module provides out of the box.
+     *
+     * @param CacheControlTools|null $tools
+     * @return void
+     */
+    public function ___clearAll(?CacheControlTools $tools): void
+    {
+        // automatically instantiate $tools so the method can be called without arguments
+        if (null === $tools) $tools = $this->modules->get('CacheControlTools')->verbose();
+
+        // clear all configured specified entries / namespaces in the database cache
+        $cache = $this->wire('cache');
+        if ($this->WireCacheExpireAll) {
+            $cache->expireAll();
+            $tools->logMessage($this->_('Expired all WireCache entries that have an expiration data ($cache->expireAll()).'));
+        }
+        if ($this->WireCacheDeleteAll) {
+            $cache->deleteAll();
+            $tools->logMessage($this->_('Deleted all WireCache entries except for reserved system entries ($cache->deleteAll()).'));
+        }
+        if (!empty($namespaceList = $this->parseNamespaceList($this->WireCacheDeleteNamespaces))) {
+            $tools->clearWireCacheByNamespaces($namespaceList);
+        }
+
+        // clear selected cache directories
+        if ($this->ClearCacheDirectories) {
+            foreach ($this->ClearCacheDirectories as $dir) {
+                $tools->clearCacheDirectoryContent($dir);
+            }
+        }
+
+        // clear procache through the api, if it is installed
+        if ($this->ClearProCache) {
+            $procache = $this->wire('procache');
+            if (null !== $procache) {
+                $procache->clearAll();
+                $tools->logMessage($this->_('Cleared the ProCache module cache ($procache->clearAll()).'));
+            }
+        }
+
+        // clear all stored asset versions
+        if ($this->ClearAllAssetVersions) {
+            $tools->clearAllAssetVersions();
+        }
+    }
+
+    /**
+     * Check if a user can execute the given action.
+     *
+     * @param string $actionId  The ID of the action to check.
+     * @param User|null $user   The user whose access to check. Defaults to the current user.
+     * @return array
+     */
+    public function canExecuteAction(string $actionId, ?User $user = null): bool
+    {
+        $user = $user ?? wire('user');
+        $actionPermissionName = $this->getActionPermissionName($actionId);
+        $hasModulePermission = $user->hasPermission(self::MODULE_PERMISSION);
+        $actionPermissionExists = $this->permissions->has($actionPermissionName);
+        // the user "lacks" the permissions for this action only if it exists and they don't have it
+        $lacksActionPermission = $actionPermissionExists && !$user->hasPermission($actionPermissionName);
+        return $hasModulePermission && !$lacksActionPermission;
+    }
+
+    /**
+     * Get the name of the optional permission for the passed action ID.
+     *
+     * @param string $actionId  The ID to get the permission name for.
+     * @return string
+     */
+    public function getActionPermissionName(string $actionId): string
+    {
+        return sprintf(
+            self::ACTION_PERMISSION_FORMAT,
+            self::MODULE_PERMISSION,
+            $actionId
+        );
+    }
+
+    /**
+     * Find an action definition by it's ID.
+     *
+     * @param string $action    The ID of the action to find.
+     * @return array|null
+     */
+    public function getActionDefinitionById(string $action): ?array
+    {
+        foreach ($this->getActionDefinitions() as $actionDefinition) {
+            if ($actionDefinition['id'] === $action) {
+                return $actionDefinition;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Check if the specified action exists.
+     *
+     * @param string $actionId  The ID of the action to check.
+     * @return boolean
+     */ 
+    public function actionExists(string $actionId): bool
+    {
+        return $this->getActionDefinitionById($actionId) !== null;
+    }
+
+    /**
+     * Get the URL of the Process Page in the backend, or a URL that directly
+     * executes an action if an $actionId is provided.
+     *
+     * @param string|null $actionId     Optional ID of the action to get an URL for.
+     * @return string
+     */
+    public function getProcessUrl(?string $actionId = null): string
+    {
+        $ProcessPage = wire('pages')->get(2)->findOne('name=cache-control, include=all');
+        return $ProcessPage->url([
+            'data' => $actionId ? [self::ACTION_PARAMETER_NAME => $actionId] : []
+        ]);
+    }
+
+
+    /**
+     * Called by ProcessWire during module installation.
+     *
+     * @return void
+     */
+    public function install()
+    {
+        // save an installation message to force creation of the cache-control log file if it doesnt exist yet
+        $tools = $this->modules->get('CacheControlTools');
+        $tools->logMessage($this->_('ProcessCacheControl installed successfully. Creating the dedicated log file.'));
+        return parent::install();
+    }
+
+
+    /**
+     * The main Process that gets executed on the module's page. Performs the
+     * action specified as a GET parameter (if any) and outputs all new log
+     * messages. Will also display buttons for all available cache actions.
+     *
+     * @return void
+     */
+    public function ___execute()
+    {
+        // save the current amount of log messages, so we can determine all new
+        // log messages after executing the cache clear action
+        $previousLogTotal = $this->log->getTotalEntries(CacheControlTools::LOG_NAME);
+
+        // if the URL specifies an action, execute it
+        $actionId = $this->wire('input')->get(self::ACTION_PARAMETER_NAME);
+        if ($actionId) {
+            $actionExists = $this->actionExists($actionId);
+            $userCanExecute = $actionExists && $this->canExecuteAction($actionId, $this->user);
+            $actionDisplayName = $actionExists ? $this->getActionDefinitionById($actionId)['title'] : $actionId;
+            if (!$actionExists) {
+                $this->error(sprintf($this->_("Requested action '%s' does not exist."), $actionDisplayName));
+            } elseif (!$userCanExecute) {
+                $this->error(sprintf($this->_("You lack the permission to execute the action '%s'."), $actionDisplayName));
+            } else {
+                $this->executeAction($actionId);
+                $this->message(sprintf($this->_("Successfully executed action '%s'. Check the log output below for more information."), $actionDisplayName));
+            }
+        }
+
+        // get all new log messages that were added by the cache clear action
+        $newLogTotal = $this->log->getTotalEntries(CacheControlTools::LOG_NAME);
+        $newLogEntries = $newLogTotal > $previousLogTotal
+            ? array_reverse($this->log->getEntries(CacheControlTools::LOG_NAME, [
+                    'limit' => $newLogTotal - $previousLogTotal,
+                ]))
+            : null;
+
+        // the following code generates the module page output
+
+        // list available actions
+        $buttonWrapper = $this->modules->get('InputfieldFieldset');
+        $buttonWrapper->label = $this->_('Available Cache Control Actions');
+        $buttonWrapper->columnWidth = 50;
+        $buttonWrapper->collapsed = Inputfield::collapsedNever;
+        foreach ($this->getAllowedActions() as $actionDefinition) {
+            $action = $this->modules->get('InputfieldButton');
+            $action->value = $actionDefinition['title'];
+            $action->href = $this->page->url(['data' => [
+                'action' => $actionDefinition['id']
+            ]]);
+            $buttonWrapper->add($action);
+        }
+
+        // list new log entries
+        $logOutput = $this->modules->get('InputfieldMarkup');
+        $logOutput->label = $this->_('Log output for the current action');
+        $logOutput->columnWidth = 50;
+        $logOutput->collapsed = Inputfield::collapsedNever;
+        if ($newLogEntries) {
+            $logOutput->value = "<code><pre>" . implode("\n", array_map(function ($line) {
+                return $line['text'];
+            }, $newLogEntries)) . "</code></pre>";
+        } else {
+            $logOutput->value = sprintf("<p>%s</p>", $this->_('No new log entries. Start a job by selecting one of the options to the left.'));
+        }
+
+        // wrap everything inside a form inputfield
+        $actionForm = $this->modules->get('InputfieldForm');
+        $actionForm->add($buttonWrapper);
+        $actionForm->add($logOutput);
+
+        return $actionForm->render();
+    }
+
+    /**
+     * Called by ProcessWire to create the flyout menu in the ProcessWire Admin.
+     *
+     * @param array $options
+     * @return void
+     */
+    public function ___executeNavJSON(array $options = [])
+    {
+        $options['itemLabel'] = 'title';
+        $options['add'] = false;
+        $options['edit'] = sprintf("?%s={id}", self::ACTION_PARAMETER_NAME);
+        $options['items'] = $this->getAllowedActions();
+        return parent::___executeNavJSON($options);
+    }
+
+    /**
+     * Parses a list of newline-seperated cache namespaces, filtering out blank lines.
+     *
+     * @param string $namespaces    The multiline string to parse.
+     * @return array
+     */
+    protected function parseNamespaceList(string $namespaces): array
+    {
+        return array_filter(
+            preg_split("/[\r\n]+/", $namespaces),
+            function ($namespace) {
+                return !empty($namespace);
+            }
+        );
+    }
+}
