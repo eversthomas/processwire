@@ -24,6 +24,7 @@ $home = $pages->get('/'); /** @var HomePage $home */
   <title><?php echo $page->title; ?></title>
   <link rel="stylesheet" type="text/css" href="<?php echo $config->urls->templates; ?>styles/main.css" />
   <meta name="description" content="">
+  <link rel="canonical" href="<?php echo $config->urls->templates; ?><?php echo $_SERVER['REQUEST_URI']; ?>">
 
   <meta property="og:title" content="">
   <meta property="og:type" content="">
