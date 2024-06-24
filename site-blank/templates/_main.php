@@ -24,7 +24,17 @@ $home = $pages->get('/'); /** @var HomePage $home */
   <title><?php echo $page->title; ?></title>
   <link rel="stylesheet" type="text/css" href="<?php echo $config->urls->templates; ?>styles/main.css" />
   <meta name="description" content="">
-  <link rel="canonical" href="<?php echo $config->urls->templates; ?><?php echo $_SERVER['REQUEST_URI']; ?>">
+  <?php
+    // Bestimmen Sie das Protokoll (http oder https)
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' || $_SERVER['SERVER_PORT'] == 443) ? "https://" : "http://";
+    // Bestimmen Sie den Host, wobei www entfernt wird, falls vorhanden
+    $host = preg_replace('/^www\./', '', $_SERVER['HTTP_HOST']);
+    // Bestimmen Sie die aktuelle URI
+    $request_uri = $_SERVER['REQUEST_URI'];
+    // Kombinieren Sie alles zu einer vollständigen URL ohne www
+    $canonical_url = $protocol . $host . $request_uri;
+  ?>
+  <link rel="canonical" href="<?php echo $canonical_url; ?>">
 
   <meta property="og:title" content="">
   <meta property="og:type" content="">
